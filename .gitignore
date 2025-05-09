@@ -1,0 +1,19 @@
+# Temporary files and editor backups
+*.swp
+
+# Python cache files
+__pycache__/
+
+# Generated files
+requirements.txt
+
+# Build and output directories
+from/
+import/
+trl/
+
+# Logging and data tracking directories
+wandb/
+
+# Original script 
+train.sh
