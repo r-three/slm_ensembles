@@ -32,4 +32,4 @@ def filter_truncated_sequences(example):
     return False
 
 tokenized_dataset = tokenized_dataset.filter(filter_truncated_sequences)
-tokenized_dataset.save_to_disk("/scratch/ssd004/scratch/nkandpa2/slm_ensembles/tulu-3-sft-mixture-pretokenized")
+tokenized_dataset.save_to_disk("/scratch/ssd004/scratch/klambert/slm_ensembles/tulu-3-sft-mixture-pretokenized")

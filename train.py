@@ -6,29 +6,30 @@ import torch.nn as nn
 import torch.nn.functional as F
 import datasets
 from transformers import AutoModelForCausalLM, AutoTokenizer, TrainerCallback
-from trl import SFTTrainer, SFTConfig, DataCollatorForCompletionOnlyLM
+from trl import SFTConfig, SFTTrainer, DataCollatorForCompletionOnlyLM
 import numpy as np
+import inspect
 
 from ensemble import ModelEnsemble
 
 
 # Model and dataset setup
 seed = 42
-dataset_path = "/scratch/ssd004/scratch/nkandpa2/slm_ensembles/tulu-3-sft-mixture-pretokenized"
-output_path = "/scratch/ssd004/scratch/nkandpa2/slm_ensembles/boosted_distillation_1.5B_teacher_average_fixed_logging"
+dataset_path = "/scratch/ssd004/scratch/klambert/slm_ensembles/tulu-3-sft-mixture-pretokenized"
+output_path = "/scratch/ssd004/scratch/klambert/slm_ensembles/boosted_distillation_1.5B_teacher_average_fixed_logging"
 teacher_model_name = "Qwen/Qwen2.5-1.5B-Instruct"
 student_model_name = "Qwen/Qwen2.5-0.5B-Instruct"
 ensemble_model_names = []
 
 tokenizer = AutoTokenizer.from_pretrained(student_model_name)
-student_model = AutoModelForCausalLM.from_pretrained(student_model_name, torch_dtype=torch.bfloat16, device_map="cuda:0")
+student_model = AutoModelForCausalLM.from_pretrained(student_model_name, torch_dtype=torch.bfloat16, device_map="auto")
 
-teacher_model = AutoModelForCausalLM.from_pretrained(teacher_model_name, torch_dtype=torch.bfloat16, device_map="cuda:1")
+teacher_model = AutoModelForCausalLM.from_pretrained(teacher_model_name, torch_dtype=torch.bfloat16, device_map="auto")
 teacher_model.resize_token_embeddings(new_num_tokens=student_model.vocab_size)
 teacher_model.requires_grad_(False)
 
 if len(ensemble_model_names) > 0:
-    ensemble_model = ModelEnsemble(ensemble_model_names, torch_dtype=torch.bfloat16, device_map="cuda:1", vocab_size=student_model.vocab_size)
+    ensemble_model = ModelEnsemble(ensemble_model_names, torch_dtype=torch.bfloat16, device_map="auto", vocab_size=student_model.vocab_size)
     ensemble_model.requires_grad_(False)
 else:
     ensemble_model = None
@@ -37,6 +38,8 @@ else:
 dataset = datasets.load_from_disk(dataset_path)
 response_template_ids = tokenizer("<|im_start|>assistant\n")["input_ids"]
 collator = DataCollatorForCompletionOnlyLM(response_template_ids, tokenizer=tokenizer)
+
+print(inspect.signature(SFTTrainer.__init__))
 
 
 class DistillationTrainer(SFTTrainer):
@@ -81,7 +84,34 @@ class DistillationTrainer(SFTTrainer):
                 num_models = len(ensemble_model.models)
                 ensemble_logits = ensemble_model(input_ids=inputs["input_ids"].to(ensemble_model.device), attention_mask=inputs["attention_mask"].to(ensemble_model.device)).logits.to(student_logits.device)
                 student_logits = (student_logits/(num_models + 1) + ensemble_logits*(num_models/(num_models+1))).detach()
-            loss = model.module.loss_function(logits=student_logits, labels=inputs["labels"], vocab_size=model.module.config.vocab_size).detach()
+
+        # Check if model has module attribute (DP/DDP wrapped) or not
+        if hasattr(model, "module"):
+            actual_model = model.module
+            print("\n------------------\nusing model.module\n-----------------\n")
+        else:
+            actual_model = model
+            print("\n------------------\nusing model\n-----------------\n")
+        
+        # Use model's loss function if it exists, otherwise use standard CE loss
+        if hasattr(actual_model, "loss_function"):
+            config = actual_model.config
+            loss = actual_model.loss_function(logits=student_logits, labels=inputs["labels"], vocab_size=config.vocab_size).detach()
+        else:
+            # Standard language modeling loss
+            loss_fct = torch.nn.CrossEntropyLoss()
+            shift_logits = student_logits[..., :-1, :].contiguous()
+            shift_labels = inputs["labels"][..., 1:].contiguous()
+            # Only calculate loss on non-padded tokens
+            active_loss = inputs["labels"][..., 1:].contiguous() != -100
+            if active_loss.any():
+                active_logits = shift_logits.view(-1, shift_logits.size(-1))[active_loss.view(-1)]
+                active_labels = shift_labels.view(-1)[active_loss.view(-1)]
+                loss = loss_fct(active_logits, active_labels)
+            else:
+                loss = torch.tensor(0.0).to(logits.device)
+
+            # loss = model.module.loss_function(logits=student_logits, labels=inputs["labels"], vocab_size=model.module.config.vocab_size).detach()
             return (loss, None, None) if prediction_loss_only else (loss, student_logits, inputs["labels"])
     
     def log(self, logs, start_time=None):
@@ -98,22 +128,35 @@ class DistillationTrainer(SFTTrainer):
 
 
 steps_per_round = 1000
-for training_round in range(0,6):
+# Added code
+existing_rounds = [i for i in range(3)]  # Adjust based on completed rounds (e.g., [0, 1] for rounds 0 and 1)
+ensemble_model_names = [os.path.join(output_path, f"round_{i}") for i in existing_rounds]
+
+if ensemble_model_names:
+    ensemble_model = ModelEnsemble(ensemble_model_names, torch_dtype=torch.bfloat16, device_map="auto", vocab_size=student_model.vocab_size)
+    ensemble_model.requires_grad_(False)
+else:
+    ensemble_model = None
+# End of added code
+
+for training_round in range(3,6):
     dataset["train"] = dataset["train"].shuffle(seed=seed+training_round)
     training_args = SFTConfig(
         output_dir=os.path.join(output_path, f"round_{training_round}"),
         overwrite_output_dir=False,
-        report_to="wandb",
+        # report_to="wandb",
+        report_to="none",
         per_device_train_batch_size=4,
         gradient_accumulation_steps=4,
         gradient_checkpointing=False,
         warmup_steps=50,
         bf16=True,
         max_steps=steps_per_round,
-        eval_strategy="steps",
-        eval_steps=100,
-        per_device_eval_batch_size=4,
-        eval_on_start=True,
+        eval_strategy="no",
+        # eval_strategy="steps",
+        # eval_steps=100,
+        # per_device_eval_batch_size=4,
+        # eval_on_start=True,
         logging_strategy="steps",
         logging_steps=10,
         save_strategy="no",
@@ -127,17 +170,17 @@ for training_round in range(0,6):
         eval_dataset=dataset["test"],
         data_collator=collator,
         args=training_args,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
     )
     trainer.train()
 
     student_model.save_pretrained(os.path.join(output_path, f"round_{training_round}"))
     if ensemble_model is None:
-        ensemble_model = ModelEnsemble([os.path.join(output_path, f"round_{training_round}")], torch_dtype=torch.bfloat16, device_map="cuda:1", vocab_size=student_model.vocab_size)
+        ensemble_model = ModelEnsemble([os.path.join(output_path, f"round_{training_round}")], torch_dtype=torch.bfloat16, device_map="auto", vocab_size=student_model.vocab_size)
         ensemble_model.requires_grad_(False)
     else:
         ensemble_model.add_model(os.path.join(output_path, f"round_{training_round}"))
     
     del student_model
-    student_model = AutoModelForCausalLM.from_pretrained(student_model_name, torch_dtype=torch.bfloat16, device_map="cuda:0")
+    student_model = AutoModelForCausalLM.from_pretrained(student_model_name, torch_dtype=torch.bfloat16, device_map="auto")
     student_model.resize_token_embeddings(new_num_tokens=student_model.vocab_size)

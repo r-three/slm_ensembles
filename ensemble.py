@@ -37,14 +37,14 @@ class ModelEnsemble(PreTrainedModel, GenerationMixin):
             device = model.get_input_embeddings().weight.device
             outputs = model(input_ids.to(device), attention_mask=attention_mask.to(device), **kwargs)
             if logits is None:
-                logits = outputs.logits.to("cuda:0")
+                logits = outputs.logits.to(device)
             else:
-                logits = logits + outputs.logits.to("cuda:0")
+                logits = logits + outputs.logits.to(device)
         logits = logits / len(self.models)
 
         loss = None
         if labels is not None:
-            loss = self.models[0].loss_function(logits=logits, labels=labels.to("cuda:0"), vocab_size=self.models[0].config.vocab_size, **kwargs)
+            loss = self.models[0].loss_function(logits=logits, labels=labels.to(logits.device), vocab_size=self.models[0].config.vocab_size, **kwargs)
 
         return CausalLMOutputWithPast(logits=logits, loss=loss)
     
