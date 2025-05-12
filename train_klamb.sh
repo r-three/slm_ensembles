@@ -15,10 +15,13 @@ echo "Job ID: $SLURM_JOB_ID"
 echo "GPU resources: $CUDA_VISIBLE_DEVICES"
 
 # Load modules if needed on your cluster
-# module load cuda/11.8 cudnn/8.6.0
+module load python/3.10.12 
+module load cuda-12.1
 
 # Activate the virtual environment - uncomment and adjust the path as needed
-# source /scratch/ssd004/scratch/klambert/slm_ensembles/env/bin/activate
+# module 
+source /scratch/ssd004/scratch/klambert/slm_ensembles/env/bin/activate
+wandb login
 
 # Run script
 python -u /h/klambert/slm_ensembles/train.py

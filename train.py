@@ -16,6 +16,36 @@ import inspect
 
 from ensemble import ModelEnsemble
 
+    # compute the teachers loss on the validation set
+    # compute the ensemble's loss on the validation set
+    # we want one loss for the teacher - how well does the teacher predict stuff
+    # at the end of every training cycle, compute the ensemble's loss and see how well it performs on the validation set
+    # graph the baseline teacher loss to the ensemble performance as we add more models
+    # does the training and ensemble adding decrease the validation loss and the similarity to the teacher
+    # two benchmarks - validation loss (how good it is at predicting instructions and similarity to the ground truth); similarity of ensemble and the teacher 
+    # dump numerical results into a file and then upldoa into a notebook
+    # put in a colab - ask Claude how to best store evaluation metrics
+    # also maybe mark the time it takes to train and evaluate 
+    # Setup wandb for this round
+    
+    # timeline
+        # have the results which would go int the paper by the end of the internship so that I can write up a paper
+        # need to see which distilation approaches work the best
+        # scale up methods after we found the best ones that work
+        # reinforcement learning for ensembles
+        # right now trying to get some signal on what works
+    # plan to run code for the night; forsight; work on the code during the day
+    # have a clear goal of what I need to do next
+    # what are the immediate todos are on my part?
+        # have the code in running condition - if I run it trains something, and trains it correctly
+        # implement the validation loss and the teacher-student-kl loss and comparison
+        # evaluate what happnes with the first run when I evaluate ensemble members
+        # read over my paper notes and search for other methods and approaches
+        # validation loss isn't going down? hwo similar it is to the teacher? -> will tell us where to go next
+    # neurips, iclr, icml, (nlp: emnlp, acl, etc.), colm (on language modeling)
+    # how do you start a conference?
+
+
 # WandB Setup
 os.environ["WANDB_PROJECT"] = "slm_ensembles"
 os.environ["WANDB_LOG_MODEL"] = "true"
@@ -166,8 +196,8 @@ steps_per_round = 1000
 start_round = max(existing_rounds) + 1 if existing_rounds else 0
 
 for training_round in range(start_round,6):
-    # Setup wandb for this round
     run_name = f"round_{training_round}"
+    print("here1")
     wandb.init(project="slm_ensembles", name=run_name, reinit=True)
     wandb.config.update({
         "round": training_round,
@@ -178,6 +208,7 @@ for training_round in range(start_round,6):
         "gradient_accumulation_steps": 4,
         "steps_per_round": steps_per_round
     })
+    print("here2")
     
     # Shuffle the dataset with a different seed each round
     dataset["train"] = dataset["train"].shuffle(seed=seed+training_round)
@@ -194,7 +225,7 @@ for training_round in range(start_round,6):
         bf16=True,
         max_steps=steps_per_round,
         eval_strategy="steps",
-        eval_steps=100,
+        eval_steps=100,               # for wandb
         logging_strategy="steps",
         logging_steps=10,
         save_strategy="steps",
@@ -204,6 +235,7 @@ for training_round in range(start_round,6):
         metric_for_best_model="eval_loss",
         greater_is_better=False,
     )
+    print("here3")
      # Create the trainer
     trainer = DistillationTrainer(
         training_round=training_round,
@@ -216,6 +248,7 @@ for training_round in range(start_round,6):
         tokenizer=tokenizer,  # Fixed: changed from processing_class to tokenizer
         callbacks=[WandbCallback],
     )
+    print("here4")
     
     # train the model
     trainer.train()
