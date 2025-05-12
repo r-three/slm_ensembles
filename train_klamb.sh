@@ -18,5 +18,4 @@ echo "Job ID: $SLURM_JOB_ID"
 # source /scratch/ssd004/scratch/klambert/slm_ensembles/slm_ensembles_env/bin/activate
 
 # Run script
-echo $(which python)
 python /h/klambert/slm_ensembles/train.py

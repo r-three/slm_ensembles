@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import datasets
 from transformers import AutoModelForCausalLM, AutoTokenizer, TrainerCallback
+# SFT Trainer = specialized trainer class from HuggingFace's TRL (Transformer Reinforcement Learning) library specifically designed for Supervised Fine-Tuning (SFT) of language models
 from trl import SFTConfig, SFTTrainer, DataCollatorForCompletionOnlyLM
 import numpy as np
 import inspect
@@ -28,19 +29,18 @@ teacher_model = AutoModelForCausalLM.from_pretrained(teacher_model_name, torch_d
 teacher_model.resize_token_embeddings(new_num_tokens=student_model.vocab_size)
 teacher_model.requires_grad_(False)
 
+# initializes the ensemble model if ensemble model naems are provided
 if len(ensemble_model_names) > 0:
     ensemble_model = ModelEnsemble(ensemble_model_names, torch_dtype=torch.bfloat16, device_map="auto", vocab_size=student_model.vocab_size)
     ensemble_model.requires_grad_(False)
 else:
     ensemble_model = None
  
-
+# loads the pre-tokenized dataset and sets up the data collator to focus training only on the assistant's responses
+# data collator = processes batches of data in a specific way; pads the sequences
 dataset = datasets.load_from_disk(dataset_path)
 response_template_ids = tokenizer("<|im_start|>assistant\n")["input_ids"]
 collator = DataCollatorForCompletionOnlyLM(response_template_ids, tokenizer=tokenizer)
-
-print(inspect.signature(SFTTrainer.__init__))
-
 
 class DistillationTrainer(SFTTrainer):
     def __init__(self, *args, **kwargs):
@@ -74,7 +74,7 @@ class DistillationTrainer(SFTTrainer):
                 ensemble_logits = None
         
         student_logits = model(input_ids, attention_mask=attention_mask).logits
-        loss = self.compute_kl_loss(student_logits, ensemble_logits, teacher_logits, labels != -100)
+        loss = self.compute_kl_loss(student_logits, ensemble_logits, teacher_logits, labels != -100) # -100 = only include tokens that have valid labels
         return (loss, student_outputs) if return_outputs else loss
 
     def prediction_step(self, model, inputs, prediction_loss_only, ignore_keys=None):
@@ -128,18 +128,17 @@ class DistillationTrainer(SFTTrainer):
 
 
 steps_per_round = 1000
-# Added code
-existing_rounds = [i for i in range(3)]  # Adjust based on completed rounds (e.g., [0, 1] for rounds 0 and 1)
-ensemble_model_names = [os.path.join(output_path, f"round_{i}") for i in existing_rounds]
+# existing_rounds = [i for i in range(3)]  # Adjust based on completed rounds (e.g., [0, 1] for rounds 0 and 1)
+# ensemble_model_names = [os.path.join(output_path, f"round_{i}") for i in existing_rounds]
 
-if ensemble_model_names:
-    ensemble_model = ModelEnsemble(ensemble_model_names, torch_dtype=torch.bfloat16, device_map="auto", vocab_size=student_model.vocab_size)
-    ensemble_model.requires_grad_(False)
-else:
-    ensemble_model = None
+# if ensemble_model_names:
+#     ensemble_model = ModelEnsemble(ensemble_model_names, torch_dtype=torch.bfloat16, device_map="auto", vocab_size=student_model.vocab_size)
+#     ensemble_model.requires_grad_(False)
+# else:
+#     ensemble_model = None
 # End of added code
 
-for training_round in range(3,6):
+for training_round in range(0,6):
     dataset["train"] = dataset["train"].shuffle(seed=seed+training_round)
     training_args = SFTConfig(
         output_dir=os.path.join(output_path, f"round_{training_round}"),
@@ -174,6 +173,7 @@ for training_round in range(3,6):
     )
     trainer.train()
 
+    # trains the student model and saves it, adding it to the ensemble
     student_model.save_pretrained(os.path.join(output_path, f"round_{training_round}"))
     if ensemble_model is None:
         ensemble_model = ModelEnsemble([os.path.join(output_path, f"round_{training_round}")], torch_dtype=torch.bfloat16, device_map="auto", vocab_size=student_model.vocab_size)
@@ -181,6 +181,8 @@ for training_round in range(3,6):
     else:
         ensemble_model.add_model(os.path.join(output_path, f"round_{training_round}"))
     
+    # resets the student model to its initial state for the next round
+    # ensures that each model in the ensemble is trained from scratch, but with knowledge of the previous models
     del student_model
     student_model = AutoModelForCausalLM.from_pretrained(student_model_name, torch_dtype=torch.bfloat16, device_map="auto")
     student_model.resize_token_embeddings(new_num_tokens=student_model.vocab_size)
