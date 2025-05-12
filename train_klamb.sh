@@ -12,10 +12,18 @@
 # Print the name of the node and job ID for debugging
 echo "Running on node: $(hostname)"
 echo "Job ID: $SLURM_JOB_ID"
+echo "GPU resources: $CUDA_VISIBLE_DEVICES"
 
-# echo $SHLVL
-# Activate the virtual environment
+# Load modules if needed on your cluster
+# module load cuda/11.8 cudnn/8.6.0
+
+# Activate the virtual environment - uncomment and adjust the path as needed
 # source /scratch/ssd004/scratch/klambert/slm_ensembles/slm_ensembles_env/bin/activate
 
+# Set environment variables for wandb
+export WANDB_API_KEY="your_wandb_api_key"  # Replace with your actual API key
+export WANDB_PROJECT="slm_ensembles"
+export WANDB_LOG_MODEL="true"
+
 # Run script
-python /h/klambert/slm_ensembles/train.py
+python -u /h/klambert/slm_ensembles/train.py
