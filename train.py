@@ -2,10 +2,13 @@ import os
 import time
 
 import wandb
+import time
 import torch
+import glob
 import torch.nn as nn
 import torch.nn.functional as F
 import datasets
+from datetime import datetime
 from transformers.trainer_utils import speed_metrics
 from transformers import AutoModelForCausalLM, AutoTokenizer, TrainerCallback
 # SFT Trainer = specialized trainer class from HuggingFace's TRL (Transformer Reinforcement Learning) library specifically designed for Supervised Fine-Tuning (SFT) of language models
@@ -52,11 +55,51 @@ os.environ["WANDB_LOG_MODEL"] = "true"
 
 # Model and dataset setup
 seed = 42
-dataset_path = "/scratch/ssd004/scratch/klambert/slm_ensembles/tulu-3-sft-mixture-pretokenized"
-output_path = "/scratch/ssd004/scratch/klambert/slm_ensembles/boosted_distillation_1.5B_teacher_average_fixed_logging"
 teacher_model_name = "Qwen/Qwen2.5-1.5B-Instruct"
 student_model_name = "Qwen/Qwen2.5-0.5B-Instruct"
 ensemble_model_names = []
+
+dataset_path = "/scratch/ssd004/scratch/klambert/slm_ensembles/tulu-3-sft-mixture-pretokenized"
+base_output_dir = "/scratch/ssd004/scratch/klambert/slm_ensembles/boosted_distillation_1.5B_teacher_average_fixed_logging"
+
+# Get current date in YYYY-MM-DD format
+current_date = datetime.now().strftime("%Y-%m-%d")
+
+# Create a date-specific directory path
+date_dir = os.path.join(base_output_dir, current_date)
+
+# Find existing run directories for today
+existing_runs = []
+if os.path.exists(date_dir):
+    # Get all subdirectories with pattern "run_X"
+    run_dirs = glob.glob(os.path.join(date_dir, "run_*"))
+    
+    # Extract run numbers
+    for dir_path in run_dirs:
+        try:
+            run_num = int(os.path.basename(dir_path).split("_")[1])
+            existing_runs.append(run_num)
+        except (ValueError, IndexError):
+            continue
+
+# Determine the next run number
+next_run = 1
+if existing_runs:
+    next_run = max(existing_runs) + 1
+
+# Create the final output directory
+run_dir = os.path.join(date_dir, f"run_{next_run}")
+os.makedirs(run_dir, exist_ok=True)
+
+print(f"Models stored in: {run_dir}")
+
+# Now modify your code to use this as the base directory
+output_path = run_dir
+
+# Create rounds subdirectories under the run directory
+def get_round_path(round_num):
+    return os.path.join(output_path, f"round_{round_num}")
+
 
 tokenizer = AutoTokenizer.from_pretrained(student_model_name)
 student_model = AutoModelForCausalLM.from_pretrained(student_model_name, torch_dtype=torch.bfloat16, device_map="auto")
@@ -111,7 +154,7 @@ class DistillationTrainer(SFTTrainer):
         
         student_logits = model(input_ids, attention_mask=attention_mask).logits
         loss = self.compute_kl_loss(student_logits, ensemble_logits, teacher_logits, labels != -100) # -100 = only include tokens that have valid labels
-        return (loss, student_outputs) if return_outputs else loss
+        return (loss, student_logits) if return_outputs else loss
 
     def prediction_step(self, model, inputs, prediction_loss_only, ignore_keys=None):
         with torch.no_grad():
@@ -196,8 +239,10 @@ steps_per_round = 1000
 start_round = max(existing_rounds) + 1 if existing_rounds else 0
 
 for training_round in range(start_round,6):
-    run_name = f"round_{training_round}"
-    print("here1")
+    round_output_dir = get_round_path(training_round)
+    
+    # Setup wandb
+    run_name = f"{os.path.basename(output_path)}_round_{training_round}"
     wandb.init(project="slm_ensembles", name=run_name, reinit=True)
     wandb.config.update({
         "round": training_round,
@@ -208,13 +253,12 @@ for training_round in range(start_round,6):
         "gradient_accumulation_steps": 4,
         "steps_per_round": steps_per_round
     })
-    print("here2")
     
     # Shuffle the dataset with a different seed each round
     dataset["train"] = dataset["train"].shuffle(seed=seed+training_round)
     
     training_args = SFTConfig(
-        output_dir=os.path.join(output_path, f"round_{training_round}"),
+        output_dir=round_output_dir,
         overwrite_output_dir=True,
         report_to="wandb",
         per_device_train_batch_size=4,
@@ -235,7 +279,6 @@ for training_round in range(start_round,6):
         metric_for_best_model="eval_loss",
         greater_is_better=False,
     )
-    print("here3")
      # Create the trainer
     trainer = DistillationTrainer(
         training_round=training_round,
@@ -248,7 +291,6 @@ for training_round in range(start_round,6):
         tokenizer=tokenizer,  # Fixed: changed from processing_class to tokenizer
         callbacks=[WandbCallback],
     )
-    print("here4")
     
     # train the model
     trainer.train()
