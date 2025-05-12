@@ -17,8 +17,6 @@
 echo "Running on node: $(hostname)"
 echo "Job ID: $SLURM_JOB_ID"
 echo "GPU resources: $CUDA_VISIBLE_DEVICES"
-echo "GPU info:"
-nvidia-smi
 
 # Load modules if needed on your cluster
 module load python/3.10.12 

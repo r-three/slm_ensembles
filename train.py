@@ -288,7 +288,7 @@ for training_round in range(start_round,6):
         eval_dataset=dataset["test"],
         data_collator=collator,
         args=training_args,
-        tokenizer=tokenizer,  # Fixed: changed from processing_class to tokenizer
+        tokenizer=tokenizer,
         callbacks=[WandbCallback],
     )
     
