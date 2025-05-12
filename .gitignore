@@ -11,6 +11,7 @@ requirements.txt
 from/
 import/
 trl/
+.vscode/
 
 # Logging and data tracking directories
 wandb/
