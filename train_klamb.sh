@@ -18,12 +18,7 @@ echo "GPU resources: $CUDA_VISIBLE_DEVICES"
 # module load cuda/11.8 cudnn/8.6.0
 
 # Activate the virtual environment - uncomment and adjust the path as needed
-# source /scratch/ssd004/scratch/klambert/slm_ensembles/slm_ensembles_env/bin/activate
-
-# Set environment variables for wandb
-export WANDB_API_KEY="your_wandb_api_key"  # Replace with your actual API key
-export WANDB_PROJECT="slm_ensembles"
-export WANDB_LOG_MODEL="true"
+# source /scratch/ssd004/scratch/klambert/slm_ensembles/env/bin/activate
 
 # Run script
 python -u /h/klambert/slm_ensembles/train.py

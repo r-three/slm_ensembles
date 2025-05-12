@@ -16,6 +16,9 @@ import inspect
 
 from ensemble import ModelEnsemble
 
+# WandB Setup
+os.environ["WANDB_PROJECT"] = "slm_ensembles"
+os.environ["WANDB_LOG_MODEL"] = "true"
 
 # Model and dataset setup
 seed = 42
