@@ -75,3 +75,5 @@ class ModelEnsemble(PreTrainedModel, GenerationMixin):
     def remove_model(self, model_idx):
         model = self.models.pop(model_idx)
         del model
+
+

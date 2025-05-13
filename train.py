@@ -8,6 +8,7 @@ import glob
 import torch.nn as nn
 import torch.nn.functional as F
 import datasets
+from torch.utils.data import DataLoader
 from datetime import datetime
 from transformers.trainer_utils import speed_metrics
 from transformers import AutoModelForCausalLM, AutoTokenizer, TrainerCallback
@@ -53,6 +54,12 @@ from ensemble import ModelEnsemble
 os.environ["WANDB_PROJECT"] = "slm_ensembles"
 os.environ["WANDB_LOG_MODEL"] = "true"
 
+# CSV logging
+csv_file = open(os.path.join(output_path, "training_metrics.csv"), "w", newline="")
+csv_writer = csv.writer(csv_file)
+csv_writer.writerow(["round", "student_eval_loss", "student_bleu", "student_rougeL", "teacher_bleu", "teacher_rougeL", "ensemble_size"])  # Write header
+start_round = max(existing_rounds) + 1 if existing_rounds else 0
+
 # Model and dataset setup
 seed = 42
 teacher_model_name = "Qwen/Qwen2.5-1.5B-Instruct"
@@ -82,18 +89,14 @@ if os.path.exists(date_dir):
         except (ValueError, IndexError):
             continue
 
-# Determine the next run number
 next_run = 1
 if existing_runs:
     next_run = max(existing_runs) + 1
 
-# Create the final output directory
 run_dir = os.path.join(date_dir, f"run_{next_run}")
 os.makedirs(run_dir, exist_ok=True)
 
 print(f"Models stored in: {run_dir}")
-
-# Now modify your code to use this as the base directory
 output_path = run_dir
 
 # Create rounds subdirectories under the run directory
@@ -120,6 +123,33 @@ else:
 dataset = datasets.load_from_disk(dataset_path)
 response_template_ids = tokenizer("<|im_start|>assistant\n")["input_ids"]
 collator = DataCollatorForCompletionOnlyLM(response_template_ids, tokenizer=tokenizer)
+
+def evaluate_model(model, eval_dataset, tokenizer, device, collate_fn):
+    """Evaluates a model and returns the language modeling loss."""
+    model.eval()
+    total_loss = 0
+    num_steps = 0
+
+    # Create a DataLoader
+    eval_dataloader = DataLoader(eval_dataset, batch_size=4, collate_fn=collate_fn)
+
+    with torch.no_grad():
+        for batch in eval_dataloader:
+            input_ids = batch["input_ids"].to(device)
+            attention_mask = batch["attention_mask"].to(device)
+            labels = batch["labels"].to(device)
+
+            outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+            loss = outputs.loss
+            total_loss += loss.item()
+            num_steps += 1
+
+    avg_loss = total_loss / num_steps
+    return {"eval_loss": avg_loss}
+
+# Evaluate the teacher model
+teacher_eval_results = evaluate_model(teacher_model, dataset["test"], tokenizer, teacher_model.device, collator) # Pass collator
+print(f"Teacher model evaluation: {teacher_eval_results}")
 
 class DistillationTrainer(SFTTrainer):
     def __init__(self, *args, **kwargs):
@@ -205,7 +235,7 @@ class DistillationTrainer(SFTTrainer):
 
 # Initialize wandb
 os.environ["WANDB_PROJECT"] = "slm_ensembles"
-os.environ["WANDB_LOG_MODEL"] = "true"
+os.environ["WANDB_LOG_MODEL"] = "checkpoint"
 
 # Setup checkpoint saving and resuming
 checkpoint_dir = os.path.join(output_path, "checkpoints")
@@ -288,16 +318,31 @@ for training_round in range(start_round,6):
         eval_dataset=dataset["test"],
         data_collator=collator,
         args=training_args,
-        tokenizer=tokenizer,
         callbacks=[WandbCallback],
     )
     
     # train the model
     trainer.train()
-
-    # Evaluate the model
+    
+    # Evaluate the student model
     eval_results = trainer.evaluate()
-    print(f"Round {training_round} evaluation results: {eval_results}")
+    student_eval_results = evaluate_model(trainer.model, dataset["test"], tokenizer, trainer.model.device, collator)
+    print(f"Round {training_round} student evaluation: {student_eval_results}")
+
+    # Log metrics
+    log_data = {
+        "round": training_round,
+        "student_eval_loss": student_eval_results["eval_loss"],
+        "student_bleu": student_eval_results["bleu"],
+        "student_rougeL": student_eval_results["rougeL"],
+        "teacher_bleu": teacher_eval_results["bleu"],
+        "teacher_rougeL": teacher_eval_results["rougeL"],
+        "ensemble_size": len(ensemble_model.models) if ensemble_model else 0,
+    }
+    csv_writer.writerow(log_data.values())
+    csv_file.flush()
+    wandb.log(log_data)
+
 
     # Save the model
     student_model.save_pretrained(os.path.join(output_path, f"round_{training_round}"))
