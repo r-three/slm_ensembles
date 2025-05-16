@@ -7,6 +7,7 @@ seed = 42
 tokenizer_name = "Qwen/Qwen2.5-0.5B-Instruct"
 dataset_name = "allenai/tulu-3-sft-mixture"
 
+# Loads the tulu-3-sft-mixture dataset (a SFT dataset from Allen AI), shuffles it, selects 200,000 examples, and splits it into train/test sets
 tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 dataset = datasets.load_dataset(dataset_name, split="train")
 dataset = dataset.shuffle(seed)
@@ -24,6 +25,7 @@ def format_and_tokenize(example):
 tokenized_dataset = dataset.map(format_and_tokenize, remove_columns=["messages", "id", "source"])
 tokenized_dataset.set_format(type="torch", columns=["input_ids", "attention_mask"])
 
+#  filters the dataset to ensure only examples that contain the complete response template are kept (avoiding truncated responses)
 response_template_ids = tokenizer("<|im_start|>assistant\n")["input_ids"]
 def filter_truncated_sequences(example):
     for start_idx in np.where(example["input_ids"] == response_template_ids[0])[0]:
@@ -31,5 +33,6 @@ def filter_truncated_sequences(example):
             return True
     return False
 
+# filters and saves the processed dataset to disk
 tokenized_dataset = tokenized_dataset.filter(filter_truncated_sequences)
-tokenized_dataset.save_to_disk("/scratch/ssd004/scratch/nkandpa2/slm_ensembles/tulu-3-sft-mixture-pretokenized")
+tokenized_dataset.save_to_disk("/scratch/ssd004/scratch/klambert/slm_ensembles/tulu-3-sft-mixture-pretokenized")
