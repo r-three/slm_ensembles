@@ -26,7 +26,6 @@ class ModelEnsemble(PreTrainedModel, GenerationMixin):
             AutoModelForCausalLM.from_pretrained(name, torch_dtype=self.torch_dtype, device_map=self.device_map) for name in model_names
         ])
         
-        # sets the same vocab size for all models
         for model in self.models:
             if self.vocab_size is not None:
                 model.resize_token_embeddings(new_num_tokens=self.vocab_size)
