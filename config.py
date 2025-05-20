@@ -5,20 +5,22 @@ import glob
 
 # WandB Setup
 os.environ["WANDB_PROJECT"] = "slm_ensembles"
-os.environ["WANDB_LOG_MODEL"] = "true"
+os.environ["WANDB_LOG_MODEL"] = "end"
 
 # Model and dataset setup
 seed = 42
 teacher_model_name = "Qwen/Qwen2.5-1.5B-Instruct"
 student_model_name = "Qwen/Qwen2.5-0.5B-Instruct"
+tokenizer_name = "Qwen/Qwen2.5-0.5B-Instruct"
+dataset_name = "allenai/tulu-3-sft-mixture"
 ensemble_model_names = []
 
 dataset_path = "/scratch/ssd004/scratch/klambert/slm_ensembles/tulu-3-sft-mixture-pretokenized"
 base_output_dir = "/scratch/ssd004/scratch/klambert/slm_ensembles/boosted_distillation_1.5B_teacher_average_fixed_logging"
 
 # Training parameters
+total_rounds = 10 # number of ensemble models
 steps_per_round = 1000
-total_rounds = 6        # number of ensemble models
 kl_temperature = 1.0
 
 def get_run_directory():
@@ -58,6 +60,7 @@ def get_training_args(checkpoint_dir):
         output_dir=checkpoint_dir,
         overwrite_output_dir=True,
         report_to="wandb",
+        hub_model_id=None,
         per_device_train_batch_size=2,
         per_device_eval_batch_size=8,
         gradient_accumulation_steps=8,

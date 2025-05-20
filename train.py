@@ -1,16 +1,17 @@
+import gc
 import os
-import csv
 import time
 import wandb
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import datasets
 from torch.utils.data import DataLoader
 from datetime import datetime, timedelta
-from transformers import AutoModelForCausalLM, AutoTokenizer, TrainerCallback
-from transformers.trainer_utils import speed_metrics  # Added this import
-from trl import SFTTrainer, DataCollatorForCompletionOnlyLM  # Fixed SFTTrainer import
+from transformers import AutoModelForCausalLM, AutoTokenizer, TrainerCallback, DataCollatorForLanguageModeling
+from transformers.trainer_utils import speed_metrics
+from trl import SFTTrainer, DataCollatorForCompletionOnlyLM 
 
 from ensemble import ModelEnsemble
 import config
@@ -44,10 +45,7 @@ def evaluate_model(model, eval_dataset, device, collate_fn):
             
             # Temporary bandaid
             if "labels" not in batch:
-                # Common practice is to shift input_ids right to create labels
                 labels = input_ids.clone()
-                labels[:, :-1] = input_ids[:, 1:]
-                labels[:, -1] = -100  # Don't predict beyond sequence
             else:
                 labels = batch["labels"].to(device)
 
@@ -59,6 +57,12 @@ def evaluate_model(model, eval_dataset, device, collate_fn):
     avg_loss = total_loss / num_batches
     return {"eval_loss": avg_loss}
 
+def cleanup_memory():
+    """Helper function to clean up GPU memory."""
+    gc.collect()
+    torch.cuda.empty_cache()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
 
 class DistillationTrainer(SFTTrainer):
     def __init__(self, *args, **kwargs):
@@ -84,23 +88,56 @@ class DistillationTrainer(SFTTrainer):
         attention_mask = inputs["attention_mask"]
         labels = inputs["labels"]
         
+        student_device = next(model.parameters()).device
+        teacher_device = next(teacher_model.parameters()).device
+        
+        # Process teacher and ensemble logits
         with torch.no_grad():
-            teacher_logits = teacher_model(input_ids.to(teacher_model.device), attention_mask=attention_mask.detach().to(teacher_model.device)).logits
+            teacher_inputs = {
+                "input_ids": input_ids.to(teacher_device),
+                "attention_mask": attention_mask.to(teacher_device)
+            }
+            teacher_logits = teacher_model(**teacher_inputs).logits
+            
             if ensemble_model is not None:
-                ensemble_logits = ensemble_model(input_ids.to(ensemble_model.device), attention_mask=attention_mask.detach().to(ensemble_model.device)).logits
+                ensemble_device = next(ensemble_model.parameters()).device
+                ensemble_inputs = {
+                    "input_ids": input_ids.to(ensemble_device),
+                    "attention_mask": attention_mask.to(ensemble_device)
+                }
+                ensemble_logits = ensemble_model(**ensemble_inputs).logits
+                ensemble_logits = ensemble_logits.to(student_device)
             else:
                 ensemble_logits = None
         
-        student_logits = model(input_ids, attention_mask=attention_mask).logits
-        loss = self.compute_kl_loss(student_logits, ensemble_logits, teacher_logits, labels != -100) # -100 = only include tokens that have valid labels
+        # Process student logits - ensure everything is on the student device
+        student_inputs = {
+            "input_ids": input_ids.to(student_device),
+            "attention_mask": attention_mask.to(student_device)
+        }
+        student_logits = model(**student_inputs).logits
+        
+        # Get teacher logits to student device for loss computation
+        teacher_logits = teacher_logits.to(student_device)
+        
+        # Calculate loss
+        loss = self.compute_kl_loss(
+            student_logits, 
+            ensemble_logits, 
+            teacher_logits, 
+            labels.to(student_device) != -100
+        )
+        
         return (loss, student_logits) if return_outputs else loss
 
     def prediction_step(self, model, inputs, prediction_loss_only, ignore_keys=None):
+        student_device = next(model.parameters()).device
+        
         with torch.no_grad():
             student_logits = model(input_ids=inputs["input_ids"], attention_mask=inputs["attention_mask"]).logits
             if ensemble_model is not None:
                 num_models = len(ensemble_model.models)
-                ensemble_logits = ensemble_model(input_ids=inputs["input_ids"].to(ensemble_model.device), attention_mask=inputs["attention_mask"].to(ensemble_model.device)).logits.to(student_logits.device)
+                ensemble_logits = ensemble_model(input_ids=inputs["input_ids"].to(student_device), attention_mask=inputs["attention_mask"].to(student_device)).logits.to(student_device)
                 student_logits = (student_logits/(num_models + 1) + ensemble_logits*(num_models/(num_models+1))).detach()
 
         # Check if model has module attribute (DP/DDP wrapped) or not
@@ -125,7 +162,7 @@ class DistillationTrainer(SFTTrainer):
                 active_labels = shift_labels.view(-1)[active_loss.view(-1)]
                 loss = loss_fct(active_logits, active_labels)
             else:
-                loss = torch.tensor(0.0).to(student_logits.device)
+                loss = torch.tensor(0.0).to(student_device)
 
         return (loss, None, None) if prediction_loss_only else (loss, student_logits, inputs["labels"])
     
@@ -158,19 +195,6 @@ def main():
     # Get run directory
     output_path = config.get_run_directory()
     print(f"Models stored in: {output_path}")
-    
-    # CSV logging for backup/additional analytics
-    csv_file = open(os.path.join(output_path, "training_metrics.csv"), "w", newline="")
-    csv_writer = csv.writer(csv_file)
-    csv_writer.writerow([
-        "round", 
-        "teacher_eval_loss", 
-        "ensemble_eval_loss", 
-        "student_eval_loss", 
-        "ensemble_size",
-        "round_duration_minutes",
-        "total_elapsed_minutes"
-    ])
 
     # Setup wandb
     run_name = f"{os.path.basename(output_path)}"
@@ -200,9 +224,8 @@ def main():
 
     # Load dataset and setup data collator
     dataset = datasets.load_from_disk(config.dataset_path)
-    response_template_ids = tokenizer("<|im_start|>assistant\n")["input_ids"]
-    collator = DataCollatorForCompletionOnlyLM(response_template_ids, tokenizer=tokenizer)
-
+    collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+    
     # Evaluate the teacher model at the beginning
     teacher_eval_results = evaluate_model(teacher_model, dataset["test"], teacher_model.device, collator)
     wandb.log({
@@ -250,6 +273,8 @@ def main():
     all_student_results = {}
 
     for round_num in range(start_round, config.total_rounds):
+        cleanup_memory()
+        
         # Record round start time
         round_start_time = time.time()
         round_start_datetime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -321,8 +346,15 @@ def main():
             "student/eval_loss": student_eval_results["eval_loss"], # Student eval metrics (current round)
             "ensemble/eval_loss": ensemble_eval_results["eval_loss"], # Ensemble metrics
             "ensemble/size": len(ensemble_model.models),
+            # New metrics:
+            "performance/teacher_vs_ensemble_gap": teacher_eval_results["eval_loss"] - ensemble_eval_results["eval_loss"],
+            "performance/ensemble_improvement": previous_ensemble_loss - ensemble_eval_results["eval_loss"] if round_num > 0 else 0,
+            "performance/teacher_achievement_pct": (teacher_eval_results["eval_loss"] / ensemble_eval_results["eval_loss"]) * 100,
         }
         wandb.log(metrics)
+        
+        # Track previous ensemble loss for improvement calculation
+        previous_ensemble_loss = ensemble_eval_results["eval_loss"]
         
         # After training, record round end time
         round_end_time = time.time()
@@ -404,9 +436,6 @@ def main():
         timing_table.add_data(r, round_duration_min, total_mins)
     
     wandb.log({"time/summary_table": timing_table})
-    
-    # Close CSV file
-    csv_file.close()
     
     # Close wandb
     wandb.finish() 

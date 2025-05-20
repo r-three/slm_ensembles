@@ -39,8 +39,13 @@
     # neurips, iclr, icml, (nlp: emnlp, acl, etc.), colm (on language modeling)
     # how do you start a conference?
 
-# Note: need to run `srun -c 4 --gres=gpu:2 --partition gpu --mem=10GB --pty --time=8:00:00 bash`
-#                   `srun -c 4 --gres=gpu:2 --partition a40 --mem=10GB --pty --time=8:00:00 bash` on a normal day
+# Note: need to run `srun -c 4 --gres=gpu:2 --partition a40 --mem=10GB --pty --time=8:00:00 bash`
+
+# Set up terminal output mirroring
+exec > >(tee -a /scratch/ssd004/scratch/klambert/slm_ensembles/logs/${SLURM_JOB_NAME}_${SLURM_JOB_ID}.out) 2> >(tee -a /scratch/ssd004/scratch/klambert/slm_ensembles/logs/${SLURM_JOB_NAME}_${SLURM_JOB_ID}.err >&2)
+
+# Print a message when the job starts
+echo "Job ${SLURM_JOB_NAME} (${SLURM_JOB_ID}) started at $(date)"
 
 # Print the name of the node and job ID for debugging
 echo "Running on node: $(hostname)"
@@ -53,7 +58,7 @@ module load cuda-12.1
 
 # Activate the virtual environment - uncomment and adjust the path as needed
 # module 
-source /scratch/ssd004/scratch/klambert/slm_ensembles/env/bin/activate
+source /scratch/ssd004/scratch/klambert/slm_ensembles/venv/bin/activate
 wandb login
 
 # Run script
