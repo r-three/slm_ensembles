@@ -16,6 +16,9 @@ from trl import SFTTrainer, DataCollatorForCompletionOnlyLM
 from ensemble import ModelEnsemble
 import config
 
+# debug
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"  # Makes CUDA errors synchronous and easier to debug
+
 teacher_model = None
 ensemble_model = None
 
@@ -110,7 +113,7 @@ class DistillationTrainer(SFTTrainer):
             else:
                 ensemble_logits = None
         
-        # Process student logits - ensure everything is on the student device
+        # Process student logits
         student_inputs = {
             "input_ids": input_ids.to(student_device),
             "attention_mask": attention_mask.to(student_device)
@@ -313,6 +316,10 @@ def main():
             callbacks=[RoundSpecificCallback],
         )   
     
+        # debug: log out the vocab size
+        print(f"Model {i} vocab size: {model.get_input_embeddings().weight.shape[0]}")
+        print(f"Student model vocab size: {student_model.get_input_embeddings().weight.shape[0]}")
+        
         # Train the model
         trainer.train()
         
@@ -335,7 +342,18 @@ def main():
             ensemble_model.requires_grad_(False)
         else:
             ensemble_model.add_model(round_output_dir)
-            
+        
+        if ensemble_model is not None:
+            print(f"Ensemble has {len(ensemble_model.models)} models")
+            for i, model in enumerate(ensemble_model.models):
+                print(f"Model {i} vocab size: {model.get_input_embeddings().weight.shape[0]}")
+                # Make sure all models have same vocab size
+                # debug
+                
+                if model.get_input_embeddings().weight.shape[0] != student_model.get_input_embeddings().weight.shape[0]:
+                    print(f"WARNING: Vocab size mismatch detected! Fixing...")
+                    model.resize_token_embeddings(student_model.get_input_embeddings().weight.shape[0])
+        
         # Evaluate the updated ensemble
         ensemble_eval_results = evaluate_model(ensemble_model, dataset["test"], ensemble_model.device, collator)
         print(f"Ensemble evaluation after round {round_num}: {ensemble_eval_results}")
@@ -376,23 +394,13 @@ def main():
             "time/total_elapsed_minutes": overall_elapsed / 60.0,
             "time/round": round_num
         }
-        wandb.log(timing_metrics)
-        
-        # Update CSV with timing information
-        csv_writer.writerow([
-            round_num, 
-            teacher_eval_results["eval_loss"],
-            ensemble_eval_results["eval_loss"],
-            student_eval_results["eval_loss"],
-            len(ensemble_model.models),
-            round_duration / 60.0,  # Minutes
-            overall_elapsed / 60.0   # Minutes
-        ])
-        csv_file.flush()        
+        wandb.log(timing_metrics) 
         
         # Reset the student model for the next round
         del student_model
-        torch.cuda.empty_cache()  # Clear CUDA cache to avoid memory issues
+        cleanup_memory()
+        print(f"GPU memory after cleanup: {torch.cuda.memory_allocated()/1024**3:.2f} GB")
+
         student_model = AutoModelForCausalLM.from_pretrained( # Loads a fresh copy of the student base model
             config.student_model_name, 
             torch_dtype=torch.bfloat16, 
