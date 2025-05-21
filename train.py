@@ -1,5 +1,6 @@
 import gc
 import os
+import pdb
 import time
 import wandb
 
@@ -315,10 +316,29 @@ def main():
             args=training_args,
             callbacks=[RoundSpecificCallback],
         )   
+        # TODO: add langauge modeling loss logging during the training loop
+        # TODO: pdb.set_trace() for debugging 
+            # run the script in the interactive session
+            
+        breakpoint()
+    
+        # debug
+        if ensemble_model is not None:
+            print(f"Ensemble has {len(ensemble_model.models)} models")
+            for i, model in enumerate(ensemble_model.models):
+                print(f"Model {i} vocab size: {model.get_input_embeddings().weight.shape[0]}")
+                # Make sure all models have same vocab size
+                # debug
+                
+                if model.get_input_embeddings().weight.shape[0] != student_model.get_input_embeddings().weight.shape[0]:
+                    print(f"WARNING: Vocab size mismatch detected! Fixing...")
+                    model.resize_token_embeddings(student_model.get_input_embeddings().weight.shape[0])
     
         # debug: log out the vocab size
-        print(f"Model {i} vocab size: {model.get_input_embeddings().weight.shape[0]}")
-        print(f"Student model vocab size: {student_model.get_input_embeddings().weight.shape[0]}")
+        print(f"Teacher model input embeddings: {teacher_model.get_input_embeddings().weight.shape[0]}")
+        print(f"Student model input embeddings: {student_model.get_input_embeddings().weight.shape[0]}")
+        print(f"Teacher vocab size: {teacher_model.vocab_size}")
+        print(f"Student model input embeddings: {student_model.get_input_embeddings().weight.shape[0]}")
         
         # Train the model
         trainer.train()
@@ -332,7 +352,7 @@ def main():
 
         # Save the model
         student_model.save_pretrained(round_output_dir)
-        tokenizer.save_pretrained(round_output_dir)
+        # tokenizer.save_pretrained(round_output_dir)
 
         # Add the model to the ensemble
         if ensemble_model is None:
@@ -342,17 +362,6 @@ def main():
             ensemble_model.requires_grad_(False)
         else:
             ensemble_model.add_model(round_output_dir)
-        
-        if ensemble_model is not None:
-            print(f"Ensemble has {len(ensemble_model.models)} models")
-            for i, model in enumerate(ensemble_model.models):
-                print(f"Model {i} vocab size: {model.get_input_embeddings().weight.shape[0]}")
-                # Make sure all models have same vocab size
-                # debug
-                
-                if model.get_input_embeddings().weight.shape[0] != student_model.get_input_embeddings().weight.shape[0]:
-                    print(f"WARNING: Vocab size mismatch detected! Fixing...")
-                    model.resize_token_embeddings(student_model.get_input_embeddings().weight.shape[0])
         
         # Evaluate the updated ensemble
         ensemble_eval_results = evaluate_model(ensemble_model, dataset["test"], ensemble_model.device, collator)
@@ -395,6 +404,7 @@ def main():
             "time/round": round_num
         }
         wandb.log(timing_metrics) 
+        breakpoint()
         
         # Reset the student model for the next round
         del student_model
@@ -406,6 +416,7 @@ def main():
             torch_dtype=torch.bfloat16, 
             device_map="auto"
         )
+        breakpoint()
         student_model.resize_token_embeddings(new_num_tokens=tokenizer.vocab_size)
         
     # Log final metrics

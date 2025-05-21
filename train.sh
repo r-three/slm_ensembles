@@ -62,4 +62,4 @@ source /scratch/ssd004/scratch/klambert/slm_ensembles/venv/bin/activate
 wandb login
 
 # Run script
-python -u /h/klambert/slm_ensembles/train.py
+python -u /h/klambert/slm_ensembles/og_train.py

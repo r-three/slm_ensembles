@@ -20,7 +20,7 @@ base_output_dir = "/scratch/ssd004/scratch/klambert/slm_ensembles/boosted_distil
 
 # Training parameters
 total_rounds = 10 # number of ensemble models
-steps_per_round = 1000
+steps_per_round = 80
 kl_temperature = 1.0
 
 def get_run_directory():
@@ -58,24 +58,26 @@ def get_training_args(checkpoint_dir):
     
     return SFTConfig(
         output_dir=checkpoint_dir,
-        overwrite_output_dir=True,
+        overwrite_output_dir=False,
         report_to="wandb",
         hub_model_id=None,
+        learning_rate=3e-5,
+        lr_scheduler_type="constant",
+        warmup_steps=0,
         per_device_train_batch_size=2,
         per_device_eval_batch_size=8,
         gradient_accumulation_steps=8,
-        gradient_checkpointing=True, 
-        warmup_steps=50,
+        gradient_checkpointing=False, 
         bf16=True,
         max_steps=steps_per_round,
         eval_strategy="steps",
         eval_steps=100,         
         logging_strategy="steps",
         logging_steps=10,
-        save_strategy="steps",
-        save_steps=500,
-        save_total_limit=3, # checkpointed models
-        load_best_model_at_end=True,
-        metric_for_best_model="eval_loss",
-        greater_is_better=False,
+        # save_strategy="true",
+        # save_steps=500,
+        # save_total_limit=3,
+        # load_best_model_at_end=True,
+        # metric_for_best_model="eval_loss",
+        # greater_is_better=False,
     )
