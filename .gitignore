@@ -16,5 +16,5 @@ trl/
 # Logging and data tracking directories
 wandb/
 
-# Original script 
-train.sh
+# Original files 
+og_train.py
