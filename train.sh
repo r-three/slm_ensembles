@@ -42,7 +42,9 @@
 # Note: need to run `srun -c 4 --gres=gpu:2 --partition a40 --mem=10GB --pty --time=8:00:00 bash`
 
 # Set up terminal output mirroring
-exec > >(tee -a /scratch/ssd004/scratch/klambert/slm_ensembles/logs/${SLURM_JOB_NAME}_${SLURM_JOB_ID}.out) 2> >(tee -a /scratch/ssd004/scratch/klambert/slm_ensembles/logs/${SLURM_JOB_NAME}_${SLURM_JOB_ID}.err >&2)
+# SLURM_JOB_ID=16262193
+# SLURM_JOB_NAME='slm_ense'
+# exec > >(tee -a /scratch/ssd004/scratch/klambert/slm_ensembles/logs/${SLURM_JOB_NAME}_${SLURM_JOB_ID}.out) 2> >(tee -a /scratch/ssd004/scratch/klambert/slm_ensembles/logs/${SLURM_JOB_NAME}_${SLURM_JOB_ID}.err >&2)
 
 # Print a message when the job starts
 echo "Job ${SLURM_JOB_NAME} (${SLURM_JOB_ID}) started at $(date)"
@@ -62,4 +64,4 @@ source /scratch/ssd004/scratch/klambert/slm_ensembles/venv/bin/activate
 wandb login
 
 # Run script
-python -u /h/klambert/slm_ensembles/og_train.py
+python -u /h/klambert/slm_ensembles/train.py

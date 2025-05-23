@@ -1,6 +1,5 @@
 import gc
 import os
-import pdb
 import time
 import wandb
 
@@ -10,15 +9,12 @@ import torch.nn.functional as F
 import datasets
 from torch.utils.data import DataLoader
 from datetime import datetime, timedelta
-from transformers import AutoModelForCausalLM, AutoTokenizer, TrainerCallback, DataCollatorForLanguageModeling
+from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments, TrainerCallback, DataCollatorForLanguageModeling
 from transformers.trainer_utils import speed_metrics
 from trl import SFTTrainer, DataCollatorForCompletionOnlyLM 
 
 from ensemble import ModelEnsemble
 import config
-
-# debug
-os.environ["CUDA_LAUNCH_BLOCKING"] = "1"  # Makes CUDA errors synchronous and easier to debug
 
 teacher_model = None
 ensemble_model = None
@@ -317,10 +313,6 @@ def main():
             callbacks=[RoundSpecificCallback],
         )   
         # TODO: add langauge modeling loss logging during the training loop
-        # TODO: pdb.set_trace() for debugging 
-            # run the script in the interactive session
-            
-        breakpoint()
     
         # debug
         if ensemble_model is not None:
@@ -416,8 +408,6 @@ def main():
             torch_dtype=torch.bfloat16, 
             device_map="auto"
         )
-        breakpoint()
-        student_model.resize_token_embeddings(new_num_tokens=tokenizer.vocab_size)
         
     # Log final metrics
     student_table = wandb.Table(columns=["Round", "Eval Loss"])

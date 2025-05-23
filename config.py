@@ -4,7 +4,7 @@ from datetime import datetime
 import glob
 
 # WandB Setup
-os.environ["WANDB_PROJECT"] = "slm_ensembles"
+os.environ["WANDB_PROJECT"] = "<slm_ensembles>"
 os.environ["WANDB_LOG_MODEL"] = "end"
 
 # Model and dataset setup
@@ -61,8 +61,8 @@ def get_training_args(checkpoint_dir):
         overwrite_output_dir=False,
         report_to="wandb",
         hub_model_id=None,
-        learning_rate=3e-5,
-        lr_scheduler_type="constant",
+        # learning_rate=3e-5,
+        # lr_scheduler_type="constant",
         warmup_steps=0,
         per_device_train_batch_size=2,
         per_device_eval_batch_size=8,
